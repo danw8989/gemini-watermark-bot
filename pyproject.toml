@@ -1,0 +1,15 @@
+[project]
+name = "gemini-watermark-bot"
+version = "0.1.0"
+description = "Telegram bot that removes Gemini's watermark from AI-generated images"
+requires-python = ">=3.11"
+dependencies = [
+    "python-telegram-bot[job-queue]>=21.0",
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "python-dotenv>=1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
