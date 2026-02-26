@@ -29,6 +29,7 @@ from telegram.ext import (
     filters,
 )
 
+from .charts import generate_overview_chart, generate_top_users_chart
 from .config import ADMIN_ID, HISTORY_SIZE, MAX_IMAGES_PER_DAY
 from .i18n import lang, t
 from .watermark import remove_watermark
@@ -233,7 +234,7 @@ async def history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show bot statistics (admin only)."""
+    """Show bot statistics as PNG charts (admin only)."""
     if not ADMIN_ID or update.effective_user.id != ADMIN_ID:
         return
 
@@ -247,45 +248,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     today_imgs = today_data["images"]
     today_users = len(today_data["users"])
 
-    lines = [
-        "\U0001f4ca Bot Statistics",
-        "\u2500" * 20,
-        f"Total images:  {total:,}",
-        f"Unique users:  {unique:,}",
-        f"Today:         {today_imgs} images, {today_users} users",
-        "",
-    ]
-
-    # --- Last 7 days bar chart ---
-    last_7 = []
-    for i in range(6, -1, -1):
-        d = datetime.date.today() - datetime.timedelta(days=i)
-        ds = str(d)
-        day_data = stats["daily"].get(ds, {"images": 0, "users": set()})
-        last_7.append((d, day_data["images"]))
-
-    max_val = max((v for _, v in last_7), default=0)
-    if max_val > 0:
-        lines.append("Last 7 days:")
-        for d, count in last_7:
-            bar_len = round(count / max_val * 8) if max_val else 0
-            bar = "\u2588" * bar_len
-            label = d.strftime("%b %d")
-            lines.append(f"  {label}  {bar} {count}")
-        lines.append("")
-
-    # --- Top 10 users ---
-    user_counts = stats.get("user_counts", {})
-    if user_counts:
-        top = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-        lines.append("Top users (all-time):")
-        for rank, (uid, cnt) in enumerate(top, 1):
-            lines.append(f"  {rank}. #{uid}  \u2192  {cnt:,} images")
-
-    await update.message.reply_text(
-        f"<pre>{chr(10).join(lines)}</pre>",
-        parse_mode="HTML",
+    overview_buf = generate_overview_chart(
+        total, unique, today_imgs, today_users, stats["daily"],
     )
+    await update.message.reply_photo(photo=overview_buf)
+
+    users_buf = generate_top_users_chart(stats.get("user_counts", {}))
+    if users_buf:
+        await update.message.reply_photo(photo=users_buf)
 
 
 # ---------------------------------------------------------------------------
