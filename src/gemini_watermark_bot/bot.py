@@ -29,7 +29,7 @@ from telegram.ext import (
     filters,
 )
 
-from .config import HISTORY_SIZE, MAX_IMAGES_PER_DAY
+from .config import ADMIN_ID, HISTORY_SIZE, MAX_IMAGES_PER_DAY
 from .i18n import lang, t
 from .watermark import remove_watermark
 
@@ -91,6 +91,40 @@ def _extract_original_name(message) -> str:
 
 def _format_timestamp(ts: int) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+# ---------------------------------------------------------------------------
+# Helpers: global stats (admin)
+# ---------------------------------------------------------------------------
+
+_STATS_DAYS_KEPT = 30
+
+
+def _init_stats(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    """Ensure bot_data['stats'] exists with proper structure."""
+    stats = context.bot_data.setdefault("stats", {})
+    stats.setdefault("total_images", 0)
+    stats.setdefault("users", set())
+    stats.setdefault("user_counts", {})
+    stats.setdefault("daily", {})
+    return stats
+
+
+def _record_usage(context: ContextTypes.DEFAULT_TYPE, user_id: int, count: int = 1) -> None:
+    """Record *count* processed images in global stats."""
+    stats = _init_stats(context)
+    stats["total_images"] += count
+    stats["users"].add(user_id)
+    stats["user_counts"][user_id] = stats["user_counts"].get(user_id, 0) + count
+
+    today = str(datetime.date.today())
+    day = stats["daily"].setdefault(today, {"images": 0, "users": set()})
+    day["images"] += count
+    day["users"].add(user_id)
+
+    # Prune entries older than _STATS_DAYS_KEPT.
+    cutoff = str(datetime.date.today() - datetime.timedelta(days=_STATS_DAYS_KEPT))
+    stats["daily"] = {d: v for d, v in stats["daily"].items() if d >= cutoff}
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +232,62 @@ async def history_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show bot statistics (admin only)."""
+    if not ADMIN_ID or update.effective_user.id != ADMIN_ID:
+        return
+
+    stats = _init_stats(context)
+    today = str(datetime.date.today())
+
+    total = stats["total_images"]
+    unique = len(stats["users"])
+
+    today_data = stats["daily"].get(today, {"images": 0, "users": set()})
+    today_imgs = today_data["images"]
+    today_users = len(today_data["users"])
+
+    lines = [
+        "\U0001f4ca Bot Statistics",
+        "\u2500" * 20,
+        f"Total images:  {total:,}",
+        f"Unique users:  {unique:,}",
+        f"Today:         {today_imgs} images, {today_users} users",
+        "",
+    ]
+
+    # --- Last 7 days bar chart ---
+    last_7 = []
+    for i in range(6, -1, -1):
+        d = datetime.date.today() - datetime.timedelta(days=i)
+        ds = str(d)
+        day_data = stats["daily"].get(ds, {"images": 0, "users": set()})
+        last_7.append((d, day_data["images"]))
+
+    max_val = max((v for _, v in last_7), default=0)
+    if max_val > 0:
+        lines.append("Last 7 days:")
+        for d, count in last_7:
+            bar_len = round(count / max_val * 8) if max_val else 0
+            bar = "\u2588" * bar_len
+            label = d.strftime("%b %d")
+            lines.append(f"  {label}  {bar} {count}")
+        lines.append("")
+
+    # --- Top 10 users ---
+    user_counts = stats.get("user_counts", {})
+    if user_counts:
+        top = sorted(user_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        lines.append("Top users (all-time):")
+        for rank, (uid, cnt) in enumerate(top, 1):
+            lines.append(f"  {rank}. #{uid}  \u2192  {cnt:,} images")
+
+    await update.message.reply_text(
+        f"<pre>{chr(10).join(lines)}</pre>",
+        parse_mode="HTML",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Image handlers
 # ---------------------------------------------------------------------------
@@ -228,6 +318,7 @@ async def _handle_single(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if result:
             _increment_rate(context)
+            _record_usage(context, msg.from_user.id)
             _add_to_history(context, result)
     except Exception:
         logger.exception("Failed to process image")
@@ -278,6 +369,8 @@ async def _flush_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE) 
             logger.exception("Failed to process image in group")
 
     _increment_rate(context, success)
+    if success:
+        _record_usage(context, first_msg.from_user.id, success)
 
     if success == len(updates):
         await status.delete()
@@ -369,6 +462,8 @@ async def handle_zip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     out_buf.seek(0)
     _increment_rate(context, success)
+    if success:
+        _record_usage(context, msg.from_user.id, success)
 
     original_name = msg.document.file_name or "archive.zip"
     result_name = f"cleaned_{original_name}"
@@ -450,6 +545,7 @@ def build_app(token: str, persistence=None) -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("stats", stats_command))
 
     # Inline mode
     app.add_handler(InlineQueryHandler(inline_query))
