@@ -189,6 +189,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def donate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(t("donate", lang(update)))
+
+
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lc = lang(update)
     history = _get_history(context)
@@ -515,6 +519,7 @@ def build_app(token: str, persistence=None) -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("donate", donate_command))
     app.add_handler(CommandHandler("stats", stats_command))
 
     # Inline mode
