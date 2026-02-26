@@ -3,3 +3,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - bot-data:/app/data
+    environment:
+      - PERSISTENCE_PATH=/app/data/bot_data.pickle
+
+volumes:
+  bot-data:
